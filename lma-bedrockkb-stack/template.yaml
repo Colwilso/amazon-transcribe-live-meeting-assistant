@@ -502,7 +502,14 @@ Resources:
                 Effect: Allow
                 Action:
                   - bedrock:InvokeModel
-                Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/*
+                  - bedrock:CreateInferenceProfile
+                  - bedrock:GetInferenceProfile
+                  - bedrock:ListInferenceProfiles
+                Resource:
+                  - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
+                  - !Sub arn:aws:bedrock:${AWS::Region}::inference-profile/*
+                  - !Sub arn:aws:bedrock:${AWS::Region}::application-inference-profile/*
+                  - !Sub arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:custom-model/*
         - PolicyName: oss-api-access
           PolicyDocument:
             Version: "2012-10-17"
