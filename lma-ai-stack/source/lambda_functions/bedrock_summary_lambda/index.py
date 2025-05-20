@@ -10,7 +10,7 @@ import boto3
 BEDROCK_MODEL_ID = os.environ["BEDROCK_MODEL_ID"]
 FETCH_TRANSCRIPT_LAMBDA_ARN = os.environ['FETCH_TRANSCRIPT_LAMBDA_ARN']
 PROCESS_TRANSCRIPT = (os.getenv('PROCESS_TRANSCRIPT', 'False') == 'True')
-TOKEN_COUNT = int(os.getenv('TOKEN_COUNT', '0')) # default 0 - do not truncate.
+TOKEN_COUNT = int(os.getenv('TOKEN_COUNT', '0'))  # default 0 - do not truncate.
 S3_BUCKET_NAME = os.environ['S3_BUCKET_NAME']
 S3_PREFIX = os.environ['S3_PREFIX']
 
@@ -23,24 +23,23 @@ CUSTOM_PROMPT_TEMPLATES_PK = "CustomSummaryPromptTemplates"
 BEDROCK_REGION = os.environ["BEDROCK_REGION_OVERRIDE"] if "BEDROCK_REGION_OVERRIDE" in os.environ else os.environ["AWS_REGION"]
 BEDROCK_ENDPOINT_URL = os.environ.get("BEDROCK_ENDPOINT_URL", f'https://bedrock-runtime.{BEDROCK_REGION}.amazonaws.com')
 
-
-
 lambda_client = boto3.client('lambda')
 dynamodb_client = boto3.client('dynamodb')
-bedrock = boto3.client(service_name='bedrock-runtime', region_name=BEDROCK_REGION, endpoint_url=BEDROCK_ENDPOINT_URL) 
+bedrock = boto3.client(service_name='bedrock-runtime', region_name=BEDROCK_REGION, endpoint_url=BEDROCK_ENDPOINT_URL)
+
 
 def get_templates_from_dynamodb(prompt_override):
     templates = []
     prompt_template_str = None
 
     if prompt_override is not None:
-        print ("Prompt Template String override:", prompt_override)
+        print("Prompt Template String override:", prompt_override)
         prompt_template_str = prompt_override
         try:
             prompt_templates = json.loads(prompt_template_str)
             for k, v in prompt_templates.items():
                 prompt = v.replace("<br>", "\n")
-                templates.append({ k:prompt })
+                templates.append({k: prompt})
         except:
             prompt = prompt_template_str.replace("<br>", "\n")
             templates.append({
@@ -50,9 +49,9 @@ def get_templates_from_dynamodb(prompt_override):
     if prompt_template_str is None:
         try:
             defaultPromptTemplatesResponse = dynamodb_client.get_item(Key={'LLMPromptTemplateId': {'S': DEFAULT_PROMPT_TEMPLATES_PK}},
-                                                               TableName=LLM_PROMPT_TEMPLATE_TABLE_NAME)
+                                                                      TableName=LLM_PROMPT_TEMPLATE_TABLE_NAME)
             customPromptTemplatesResponse = dynamodb_client.get_item(Key={'LLMPromptTemplateId': {'S': CUSTOM_PROMPT_TEMPLATES_PK}},
-                                                               TableName=LLM_PROMPT_TEMPLATE_TABLE_NAME)
+                                                                     TableName=LLM_PROMPT_TEMPLATE_TABLE_NAME)
 
             defaultPromptTemplates = defaultPromptTemplatesResponse["Item"]
             customPromptTemplates = customPromptTemplatesResponse["Item"]
@@ -69,18 +68,19 @@ def get_templates_from_dynamodb(prompt_override):
                     if (prompt and prompt != 'NONE'):
                         prompt = prompt.replace("<br>", "\n")
                         index = k.find('#')
-                        k_stripped = k[index+1:]
-                        templates.append({ k_stripped:prompt })
+                        k_stripped = k[index + 1:]
+                        templates.append({k_stripped: prompt})
         except Exception as e:
-            print ("Exception:", e)
+            print("Exception:", e)
             raise (e)
 
     return templates
 
+
 def get_transcripts(callId):
     payload = {
-        'CallId': callId, 
-        'ProcessTranscript': PROCESS_TRANSCRIPT, 
+        'CallId': callId,
+        'ProcessTranscript': PROCESS_TRANSCRIPT,
         'TokenCount': TOKEN_COUNT,
         'IncludeSpeaker': True
     }
@@ -96,12 +96,29 @@ def get_transcripts(callId):
     print("Transcript JSON:", transcript_json)
     return transcript_json
 
+
+def extract_provider_from_model_id(modelId):
+    """Extract the provider name from a model ID, handling inference profiles."""
+    # Check if this is an inference profile (starts with "us.")
+    if modelId.startswith("us."):
+        # For inference profiles like "us.anthropic.claude-3-sonnet-20240229-v1:0"
+        # The provider is the second part
+        parts = modelId.split(".")
+        if len(parts) >= 2:
+            return parts[1]  # Return the provider part (e.g., "anthropic")
+
+    # Standard model IDs like "anthropic.claude-3-sonnet-20240229-v1:0"
+    # The provider is the first part
+    return modelId.split(".")[0]
+
+
 def get_request_body(modelId, prompt, max_tokens, temperature):
-    provider = modelId.split(".")[0]
+    provider = extract_provider_from_model_id(modelId)
     request_body = None
+
     if provider == "anthropic":
-        # claude-3 models use new messages format
-        if modelId.startswith("anthropic.claude-3"):
+        # Check if this is a Claude 3 model
+        if "claude-3" in modelId:
             request_body = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "messages": [{"role": "user", "content": [{'type': 'text', 'text': prompt}]}],
@@ -118,20 +135,23 @@ def get_request_body(modelId, prompt, max_tokens, temperature):
         raise Exception("Unsupported provider: ", provider)
     return request_body
 
+
 def get_generated_text(modelId, response):
-    provider = modelId.split(".")[0]
+    provider = extract_provider_from_model_id(modelId)
     generated_text = None
     response_body = json.loads(response.get("body").read())
     print("Response body: ", json.dumps(response_body))
+
     if provider == "anthropic":
-        # claude-3 models use new messages format
-        if modelId.startswith("anthropic.claude-3"):
+        # Check if this is a Claude 3 model
+        if "claude-3" in modelId:
             generated_text = response_body.get("content")[0].get("text")
         else:
             generated_text = response_body.get("completion")
     else:
         raise Exception("Unsupported provider: ", provider)
     return generated_text
+
 
 def call_bedrock(prompt_data):
     modelId = BEDROCK_MODEL_ID
@@ -144,6 +164,7 @@ def call_bedrock(prompt_data):
     generated_text = get_generated_text(modelId, response)
     print("Bedrock response: ", json.dumps(generated_text))
     return generated_text
+
 
 def generate_summary(transcript, prompt_override):
     # first check to see if this is one prompt, or many prompts as a json
@@ -163,6 +184,7 @@ def generate_summary(transcript, prompt_override):
         return result[list(result.keys())[0]]
     return json.dumps(result)
 
+
 def posixify_filename(filename: str) -> str:
     # Replace all invalid characters with underscores
     regex = r'[^a-zA-Z0-9_.]'
@@ -171,6 +193,7 @@ def posixify_filename(filename: str) -> str:
     posix_filename = re.sub(r'^_+', '', posix_filename)
     posix_filename = re.sub(r'_+$', '', posix_filename)
     return posix_filename
+
 
 def getKBMetadata(metadata):
     # Keys to include
@@ -182,12 +205,14 @@ def getKBMetadata(metadata):
     }
     return json.dumps(kbMetadata)
 
+
 def format_summary(summary, metadata):
     summary_dict = json.loads(summary)
-    summary_dict["MEETING NAME"]=metadata["CallId"]
-    summary_dict["MEETING DATE AND TIME"]=metadata["CreatedAt"]
-    summary_dict["MEETING DURATION (SECONDS)"]=int(metadata["TotalConversationDurationMillis"]/1000)
+    summary_dict["MEETING NAME"] = metadata["CallId"]
+    summary_dict["MEETING DATE AND TIME"] = metadata["CreatedAt"]
+    summary_dict["MEETING DURATION (SECONDS)"] = int(metadata["TotalConversationDurationMillis"] / 1000)
     return json.dumps(summary_dict)
+
 
 def write_to_s3(callId, metadata, transcript, summary):
     s3 = boto3.client('s3')
@@ -206,6 +231,7 @@ def write_to_s3(callId, metadata, transcript, summary):
     print(f"Wrote transcript to S3: s3://{S3_BUCKET_NAME}/{transcript_file_key}")
     s3.put_object(Bucket=S3_BUCKET_NAME, Key=f"{transcript_file_key}.metadata.json", Body=kbMetadata)
     print(f"Wrote transcript metadata to S3: s3://{S3_BUCKET_NAME}/{summary_file_key}.metadata.json")
+
 
 def handler(event, context):
     print("Received event: ", json.dumps(event))
@@ -227,7 +253,8 @@ def handler(event, context):
         summary = 'An error occurred.'
     print("Returning: ", json.dumps({"summary": summary}))
     return {"summary": summary}
-    
+
+
 # for testing on terminal
 if __name__ == "__main__":
     event = {
